@@ -1,0 +1,223 @@
+# EXTENDING DOM-0 HYPERCALLS
+1) File:/xen/arch/x86/hypercall.c
+Modify hypercall_args_table adding ARGS(hyp_name, num_args),
+```
+ARGS(vmcs_fuzzing, 2), //VMCS FUZZING ARGUMENTS
+
+```
+2) File:
+/xen/arch/x86/pv/hypercall.c
+Modify the hypercall table adding
+```
+    HYPERCALL(vmcs_fuzzing),
+```
+3) File:xen/include/xen/hypercall.h
+add your signature function as extern.
+For instance, do_hyp_name(var name,..., var name)
+```
+extern long
+do_vmcs_fuzzing(
+    int a, int b);
+```
+4) File: xen/include/public/xen.h, add 
+```
+#define __HYPERVISOR_vmcs_fuzzing         43
+```
+
+
+## VMCS_FUZZING Hypercall definition
+
+5) Go to the directory /xen/common/
+- add the hypercall code (hyp_name.c)
+```
+long do_vmcs_fuzzing(int a, int b){
+    //printk("A %d + B %d");
+    int c=0;
+    c=a+b;
+    return c;
+}
+```
+- Modify the Makefile
+File:xen/common/Makefile
+```
+obj-y += vmcs_fuzzing.o
+```
+
+6) File: xen/include/xen; add your library hyp_name.h
+
+7) go to "xen/tools/libs/ctrl/xc_private.h"
+```
+static inline int do_vmcs_fuzzing(xc_interface *xch, int a, int b)
+{
+    return xencall2(xch->xcall,__HYPERVISOR_vmcs_fuzzing, a,b);
+}
+```
+8) go to "xen/tools/libs/ctrl/xc_private.c"
+```
+int xc_vmcs_fuzzing(xc_interface *xch, int a, int b)
+{
+    int rc;
+    rc=0;
+    rc = do_vmcs_fuzzing(xch, a, b);
+    return rc;
+}
+```
+9) go to "xen/tools/include/xenctrl.h
+```
+int xc_vmcs_fuzzing(xc_interface *xch, int a, int b);
+```
+
+# Extending the domain struct with vmcs monitoring
+We change the domain struct to support vmcs monitoring
+Go to xen/include/xen/sched.h
+```
+    /** VMCS monitoring structures**/
+    uint64_t* vmcs_monitoring_buffer; 
+    unsigned int vmcs_monitoring_pos=0;
+    unsigned int vmcs_monitoring_size=0;
+    unsigned int vmcs_monitoring_flag=0;
+    /******************************/
+```
+
+Then, we clear the buffer once the domain is destroyed
+go to cen/common/domain.c
+```
+    /**VMCS Monitoring, free the buffer **/
+    xfree(d->vmcs_monitoring_buffer);
+```
+
+We change the vm_read function adding the following coode
+```
+struct domain *d;
+    d = current->domain;
+    if ( d && (d->vmcs_monitoring_flag==1) && (d->vmcs_monitoring_buffer)){
+        /* Traces the VMREAD */
+        if(d->vmcs_monitoring_pos<d->vmcs_monitoring_size){
+            long vett [2];
+            vett[0]=field;
+            vett[1]=*value;
+            d->vmcs_monitoring_buffer[d->vmcs_monitoring_pos]=vett;
+            d->vmcs_monitoring_pos=d->vmcs_monitoring_pos+1;
+        }
+    } 
+```
+
+
+
+## VMCS Monitoring extension
+We change our hypercall in order to start/stop the monitoring
+
+```
+#include <xen/xmalloc.h>
+#include <xen/guest_access.h>
+#include <xen/sched.h>
+#include <public/vmcs_fuzzing.h>
+/**
+ * @brief  This function enables the VMCS Monitoring/Fuzzing
+ * 
+ * @param dom It is the domain under monitoring/injection
+ * @param mode it is the mode (the oepration)
+ * @param size it is the size of the buffer as number of uint64
+ * @param buf it is the pointer to the area heap where the buffer is located
+ * @return long 
+ * 
+ */
+long do_vmcs_fuzzing(domid_t dom, int mode, unsigned int size,XEN_GUEST_HANDLE_PARAM(uint64_t) buf){
+
+    int ret = 0;
+    struct domain *d;
+
+    d = get_domain_by_id(dom);
+
+    if ( !d )
+        return -EINVAL; /* invalid domain */
+
+    switch ( mode )
+    {
+    case VMCS_MONITORING_START:
+    {
+        if (d->vmcs_monitoring_buffer)
+        {
+            ret = -EBUSY; /* domain already being traced */
+            break;
+        }
+
+        d->vmcs_monitoring_pos = 0;
+        d->vmcs_monitoring_size = size;
+        d->vmcs_monitoring_buffer = xmalloc_array(uint64_t, size);
+
+        if ( !d->vmcs_monitoring_buffer )
+            ret = -ENOMEM;
+        d->vmcs_monitoring_flag=1;
+        break;
+    }
+
+    case VMCS_MONITORING_STOP:
+    {
+        d->vmcs_monitoring_flag=0;
+        uint64_t* temp = d->vmcs_monitoring_buffer;
+        d->vmcs_monitoring_buffer = NULL;
+
+        if ( copy_to_guest(buf, temp, d->vmcs_monitoring_pos) )
+            ret = -EFAULT;
+
+        xfree(temp);
+        ret = d->vmcs_monitoring_pos;
+        break;
+    }
+
+    default:
+        ret = -ENOSYS;
+    }
+
+    if ( dom != DOMID_SELF )
+        put_domain(d);
+
+    return ret;
+}
+```
+
+The definitions of macros is in /xen/include/public/vmcs_fuzzing.h
+
+
+Once we have changed our hypercall, we need to change also the previous steps:
+
+1) 
+```
+ARGS(vmcs_fuzzing, 4), //VMCS FUZZING ARGUMENTS
+```
+2)  
+```extern long do_vmcs_fuzzing(
+    domid_t dom_id, int mode, unsigned int size, XEN_GUEST_HANDLE_PARAM(uint64_t) buf);
+```
+3) In xc_private.h:
+
+    - 
+    ```
+    static inline int do_vmcs_fuzzing(xc_interface *xch, domid_t dom_id, int mode, signed int size, xc_hypercall_buffer_t *buf)
+    {
+        DECLARE_HYPERCALL_BUFFER_ARGUMENT(buf);
+        return xencall4(xch->xcall, __HYPERVISOR_vmcs_fuzzing,dom_id, mode, size, HYPERCALL_BUFFER_AS_ARG(buf));
+    }
+```
+
+4) In xc_private.c
+```
+int xc_vmcs_fuzzing(xc_interface *xch, domid_t dom_id,int mode, unsigned int size, uint64_t* arg)
+{
+    int rc;
+    DECLARE_HYPERCALL_BOUNCE(arg, size * sizeof(uint64_t), XC_HYPERCALL_BUFFER_BOUNCE_OUT);
+    if ( xc_hypercall_bounce_pre(xch, arg) ){
+        PERROR("Could not bounce buffer for vmcs fuzzing hypercall");
+        return -ENOMEM;
+    }
+    rc = do_vmcs_fuzzing(xch, dom_id, mode, size, HYPERCALL_BUFFER(arg));
+    xc_hypercall_bounce_post(xch, arg);
+    return rc;
+}
+```
+
+5)  In ctrl
+```
+int xc_vmcs_fuzzing(xc_interface *xch, domid_t dom_id, int mode,unsigned int size, uint64_t *buf);
+```

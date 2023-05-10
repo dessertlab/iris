@@ -1,0 +1,1518 @@
+diff -ruN xen/tools/include/xenctrl.h xen_patched/tools/include/xenctrl.h
+--- xen/tools/include/xenctrl.h	2022-11-05 13:12:55.416490243 +0100
++++ xen_patched/tools/include/xenctrl.h	2022-11-05 12:58:09.486058685 +0100
+@@ -127,6 +127,7 @@
+ 
+ typedef enum xc_error_code xc_error_code;
+ 
++int xc_vmcs_fuzzing(xc_interface *xch, domid_t dom_id, int mode,unsigned int size, uint64_t *buf);
+ 
+ /*
+  *  INITIALIZATION FUNCTIONS
+diff -ruN xen/tools/libs/ctrl/xc_private.c xen_patched/tools/libs/ctrl/xc_private.c
+--- xen/tools/libs/ctrl/xc_private.c	2022-11-05 13:12:55.420490092 +0100
++++ xen_patched/tools/libs/ctrl/xc_private.c	2022-11-05 12:58:09.486058685 +0100
+@@ -326,6 +326,20 @@
+     return flush_mmu_updates(xch, mmu);
+ }
+ 
++int xc_vmcs_fuzzing(xc_interface *xch, domid_t dom_id,int mode, unsigned int size, uint64_t* arg)
++{
++    int rc;
++    DECLARE_HYPERCALL_BOUNCE(arg, size * sizeof(uint64_t), XC_HYPERCALL_BUFFER_BOUNCE_BOTH);
++    if ( xc_hypercall_bounce_pre(xch, arg) ){
++        PERROR("Could not bounce buffer for vmcs fuzzing hypercall");
++        return -ENOMEM;
++    }
++    rc = do_vmcs_fuzzing(xch, dom_id, mode, size, HYPERCALL_BUFFER(arg));
++    xc_hypercall_bounce_post(xch, arg);
++    return rc;
++}
++
++
+ long do_memory_op(xc_interface *xch, int cmd, void *arg, size_t len)
+ {
+     DECLARE_HYPERCALL_BOUNCE(arg, len, XC_HYPERCALL_BUFFER_BOUNCE_BOTH);
+diff -ruN xen/tools/libs/ctrl/xc_private.h xen_patched/tools/libs/ctrl/xc_private.h
+--- xen/tools/libs/ctrl/xc_private.h	2022-11-05 13:12:55.420490092 +0100
++++ xen_patched/tools/libs/ctrl/xc_private.h	2022-11-05 12:58:09.486058685 +0100
+@@ -223,6 +223,14 @@
+  */
+ void xc__hypercall_buffer_cache_release(xc_interface *xch);
+ 
++
++
++static inline int do_vmcs_fuzzing(xc_interface *xch, domid_t dom_id, int mode, signed int size, xc_hypercall_buffer_t *buf)
++{
++    DECLARE_HYPERCALL_BUFFER_ARGUMENT(buf);
++    return xencall4(xch->xcall, __HYPERVISOR_vmcs_fuzzing,dom_id, mode, size, HYPERCALL_BUFFER_AS_ARG(buf));
++}
++
+ /*
+  * Hypercall interfaces.
+  */
+diff -ruN xen/xen/arch/x86/boot/Makefile xen_patched/xen/arch/x86/boot/Makefile
+--- xen/xen/arch/x86/boot/Makefile	2022-11-05 13:12:55.492487370 +0100
++++ xen_patched/xen/arch/x86/boot/Makefile	2022-11-05 12:58:09.486058685 +0100
+@@ -21,3 +21,12 @@
+ 
+ reloc.S: reloc.c $(RELOC_DEPS) build32.lds
+ 	$(MAKE) -f build32.mk $@ RELOC_DEPS="$(RELOC_DEPS)"
++
++ifeq ($(CONFIG_COVERAGE),y)
++ifeq ($(CONFIG_CC_IS_CLANG),y)
++    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
++else
++    COV_FLAGS := -fprofile-arcs -ftest-coverage
++endif
++$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
++endif
+\ Manca newline alla fine del file
+diff -ruN xen/xen/arch/x86/cpu/Makefile xen_patched/xen/arch/x86/cpu/Makefile
+--- xen/xen/arch/x86/cpu/Makefile	2022-11-05 13:12:54.616520142 +0100
++++ xen_patched/xen/arch/x86/cpu/Makefile	2022-11-05 12:58:09.486058685 +0100
+@@ -11,3 +11,12 @@
+ obj-y += mwait-idle.o
+ obj-y += shanghai.o
+ obj-y += vpmu.o vpmu_amd.o vpmu_intel.o
++
++ifeq ($(CONFIG_COVERAGE),y)
++ifeq ($(CONFIG_CC_IS_CLANG),y)
++    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
++else
++    COV_FLAGS := -fprofile-arcs -ftest-coverage
++endif
++$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
++endif
+\ Manca newline alla fine del file
+diff -ruN xen/xen/arch/x86/hvm/Makefile xen_patched/xen/arch/x86/hvm/Makefile
+--- xen/xen/arch/x86/hvm/Makefile	2022-11-05 13:12:54.676517927 +0100
++++ xen_patched/xen/arch/x86/hvm/Makefile	2022-11-05 12:58:09.486058685 +0100
+@@ -29,3 +29,12 @@
+ obj-y += vmsi.o
+ obj-y += vpic.o
+ obj-y += vpt.o
++
++ifeq ($(CONFIG_COVERAGE),y)
++ifeq ($(CONFIG_CC_IS_CLANG),y)
++    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
++else
++    COV_FLAGS := -fprofile-arcs -ftest-coverage
++endif
++$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
++endif
+\ Manca newline alla fine del file
+diff -ruN xen/xen/arch/x86/hvm/vmx/Makefile xen_patched/xen/arch/x86/hvm/vmx/Makefile
+--- xen/xen/arch/x86/hvm/vmx/Makefile	2022-11-05 13:12:54.692517336 +0100
++++ xen_patched/xen/arch/x86/hvm/vmx/Makefile	2022-11-05 12:58:09.486058685 +0100
+@@ -4,3 +4,12 @@
+ obj-y += vmcs.o
+ obj-y += vmx.o
+ obj-y += vvmx.o
++
++ifeq ($(CONFIG_COVERAGE),y)
++ifeq ($(CONFIG_CC_IS_CLANG),y)
++    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
++else
++    COV_FLAGS := -fprofile-arcs -ftest-coverage
++endif
++$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
++endif
+\ Manca newline alla fine del file
+diff -ruN xen/xen/arch/x86/hvm/vmx/vmx.c xen_patched/xen/arch/x86/hvm/vmx/vmx.c
+--- xen/xen/arch/x86/hvm/vmx/vmx.c	2022-11-05 13:12:55.532485859 +0100
++++ xen_patched/xen/arch/x86/hvm/vmx/vmx.c	2022-11-08 22:26:28.557648101 +0100
+@@ -15,6 +15,7 @@
+  * this program; If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <xen/delay.h>
+ #include <xen/guest_access.h>
+ #include <xen/init.h>
+ #include <xen/lib.h>
+@@ -59,6 +60,8 @@
+ #include <asm/mce.h>
+ #include <asm/monitor.h>
+ #include <public/arch-x86/cpuid.h>
++#include <xen/coverage.h>
++#include "../../../../common/coverage/coverage.h"
+ 
+ static bool_t __initdata opt_force_ept;
+ boolean_param("force-ept", opt_force_ept);
+@@ -3937,12 +3940,263 @@
+     return vlapic_apicv_write(current, exit_qualification & 0xfff);
+ }
+ 
++/**
++ * @brief This function enable/disable preemption timer
++ */
++#define PIN_BASED_VMX_PREEMPTION_TIMER		(1UL << 6)
++static void vmx_preemption_timer_set_enable(bool enable)
++{
++    unsigned long pin_based_ctrl ;
++	__vmread_without_monitoring(PIN_BASED_VM_EXEC_CONTROL,&pin_based_ctrl);
++
++	if (enable){
++        __vmwrite_without_monitoring(GUEST_PREEMPTION_TIMER, 0);
++		pin_based_ctrl |= PIN_BASED_VMX_PREEMPTION_TIMER;
++    }
++	else{
++		pin_based_ctrl &= ~PIN_BASED_VMX_PREEMPTION_TIMER;
++    }
++	__vmwrite_without_monitoring(PIN_BASED_VM_EXEC_CONTROL, pin_based_ctrl);
++    
++}
++
++/**
++ * @brief This function:
++ * 1) chooses if the ijection has to be done comparing the filtering list with the exit reason
++ * 2) update the general purpose regs ( monitors too)
++ * 3) 
++ */
++int vmcs_fuzzing_injection(struct cpu_user_regs *regs){
++    struct vcpu *v = current;
++    struct domain *currd = v->domain;
++    struct domain *dom0 = get_domain_by_id(0);
++    unsigned long exit_reason;
++    int ret;
++    int i, j;
++    uint64_t num_sec;
++  
++
++    if (currd->vmcs_boot_monitoring_mode == 1 && dom0->vmcs_boot_monitoring_exit_count > 0) {
++       
++         /**start timestamp sampling  **/
++        if(dom0->vmcs_boot_monitoring_buffer_timing_flag==1 && dom0->vmcs_boot_monitoring_exit_count<dom0->vmcs_boot_monitoring_exit_n){
++            READ_TSC(currd->vmcs_boot_monitoring_buffer_timing[dom0->vmcs_boot_monitoring_exit_count]);
++        }
++        /**end timestamp sampling **/
++       
++        dom0->vmcs_boot_monitoring_exit_count++;
++        if (dom0->vmcs_debug_mode == 1) {
++            printk("************* VMCS Area **************\n");
++            vmcs_dump_vcpu(v);
++            printk("**************************************\n");
++        }
++    }
++    else if (currd->vmcs_boot_monitoring_mode == 1 && dom0->vmcs_boot_monitoring_exit_count == 0){
++        currd->vmcs_boot_monitoring_mode = 0;
++        currd->vmcs_monitored_exit_valid=1;
++        dom0->vmcs_boot_monitoring_synch = 1;
++        num_sec = dom0->vmcs_monitoring_num_sec;
++        for (i=0; i<num_sec; i++){
++            for (j=0; j<20; j++) {
++                asm volatile("nop" : : : "memory");
++            }
++            if (dom0->vmcs_boot_monitoring_setup == 1) {
++                break;
++            }
++        }
++        currd->vmcs_monitored_exit_valid=0;
++    }
++
++    /** Boot monitoring setup: allocates the monitoring buffer **/
++    if (dom0->vmcs_boot_monitoring_setup == 1 && dom0->vmcs_boot_monitoring_exit_count == 0) {
++        ret = 0; 
++        vmx_preemption_timer_set_enable(false);  
++        
++        // Enable monitoring mode if EXIT isn't preemption timer
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD] boot monitoring enabled\n");
++        __vmread_without_monitoring(VM_EXIT_REASON, &exit_reason);
++        if (exit_reason == EXIT_REASON_VMX_PREEMPTION_TIMER_EXPIRED) {
++            currd->vmcs_boot_monitoring_mode = 0;
++        }
++        else {
++            cov_ops.reset_counters();
++            currd->vmcs_boot_monitoring_pos = 0;                                                    // count vmreads/vmwrites monitored
++            currd->vmcs_boot_monitoring_buffer_size = dom0->vmcs_boot_monitoring_buffer_size;       // num vmreads/vmwrite to be monitored
++            if ( currd->vmcs_boot_monitoring_buffer ) {
++                xfree(currd->vmcs_boot_monitoring_buffer);
++            }
++            currd->vmcs_boot_monitoring_buffer = xmalloc_array(cpu_bin_data_t, currd->vmcs_boot_monitoring_buffer_size);
++
++            /**start timestamp sampling  **/
++            if(dom0->vmcs_boot_monitoring_buffer_timing_flag==1){
++                if ( currd->vmcs_boot_monitoring_buffer_timing ) {
++                    xfree(currd->vmcs_boot_monitoring_buffer_timing);
++                }
++                currd->vmcs_boot_monitoring_buffer_timing = xmalloc_array(uint64_t, dom0->vmcs_boot_monitoring_exit_n);
++                READ_TSC(currd->vmcs_boot_monitoring_buffer_timing[dom0->vmcs_boot_monitoring_exit_count]);
++            }
++            /**end timestamp sampling **/
++
++
++            if ( !currd->vmcs_boot_monitoring_buffer )
++                printk("[CMD] buffer not allocated properly\n");  
++
++            currd->vmcs_boot_monitoring_mode = 1;
++            dom0->vmcs_boot_monitoring_setup = 0;
++            dom0->vmcs_boot_monitoring_exit_count++;
++        }
++    }
++
++    /** Disable boot monitoring when the buffer is full **/
++    if ((currd->vmcs_boot_monitoring_mode == 1) && ((dom0->vmcs_boot_monitoring_exit_count) == (dom0->vmcs_boot_monitoring_exit_n))) {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD] boot monitoring disabled\n");
++        dom0->vmcs_boot_monitoring_exit_count = 0;
++        vmx_preemption_timer_set_enable(true);    // Block VM in a preempt timer loop
++    } 
++
++    /** MUTATION ENABLED CMD **/
++    if(dom0->vmcs_boot_mutation_mode==currd->domain_id){
++        currd->vmcs_mutation_mode=1;
++        if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection] vmcs_mutation_mode=1, proc_id %d\n", smp_processor_id());
++    }
++
++    if (currd->vmcs_mutation_mode==1){
++        //uint64_t i;
++        ret = -1;
++        /** Set preemption timer**/
++        vmx_preemption_timer_set_enable(true);
++
++        if(currd->vmcs_mutation_iteration_in_progress==1){
++            currd->vmcs_mutation_new_iteration=0;
++            currd->vmcs_mutation_iteration_in_progress=0;
++        }
++
++        if (currd->vmcs_mutation_new_iteration==1 && currd->mutation) {
++            int index;
++            if (dom0->vmcs_debug_mode == 1) printk("[DBG] NEW ITERATION STARTED\n");
++            if (dom0->vmcs_debug_mode == 1) {
++                printk("************* VMCS Area (before mutation) **************\n");
++                vmcs_dump_vcpu(v);
++                printk("**************************************\n");
++            }
++            currd->vmcs_mutation_iteration_in_progress=1;
++            /***Software Injection/fuzzing general purpose registers **/
++            get_idx_mutation(dom0, RAX, index);
++            regs->rax = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RAX:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RBX, index);
++            regs->rbx = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RBX:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RCX, index);
++            regs->rcx = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RCX:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RDX, index);
++            regs->rdx = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RDX:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R8, index);
++            regs->r8  = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R8:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R9, index);    
++            regs->r9 = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R9:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R10, index);
++            regs->r10 = currd->mutation[index]; 
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R10:%"PRIx64"\n", currd->mutation[index]); 
++            get_idx_mutation(dom0, R11, index); 
++            regs->r11 = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R11:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R12, index);
++            regs->r12 = currd->mutation[index]; 
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R12:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R13, index);
++            regs->r13 = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R13:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R14, index);      
++            regs->r14 = currd->mutation[index]; 
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R14:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, R15, index);
++            regs->r15 = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  R15:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RBP, index);
++            regs->rbp = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RBP:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RDI, index);
++            regs->rdi = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RDI:%"PRIx64"\n", currd->mutation[index]);
++            get_idx_mutation(dom0, RSI, index);
++            regs->rsi = currd->mutation[index];
++            if (dom0->vmcs_debug_mode == 1) printk("[vmcs_fuzzing_injection]  RSI:%"PRIx64"\n", currd->mutation[index]);
++            //if (dom0->vmcs_debug_mode == 1) printk("[DBG_HANDLER] %"PRIu64"\n", i);
++
++            if(dom0->vmcs_mutation_buffer_timing_flag==1 && currd->vmcs_mutation_exit_count_timing<dom0->vmcs_mutation_exit_n_timing){
++                READ_TSC(currd->vmcs_mutation_buffer_timing[currd->vmcs_mutation_exit_count_timing]);
++                currd->vmcs_mutation_exit_count_timing++;
++            }
++
++            
++
++            ret = 0;
++        }   
++
++        if (dom0->vmcs_mutation_buffer_timing_flag==1 && currd->vmcs_mutation_exit_count_timing<dom0->vmcs_mutation_exit_n_timing && dom0->vmcs_get_max_tp_flag) {
++            READ_TSC(currd->vmcs_mutation_buffer_timing[currd->vmcs_mutation_exit_count_timing]);
++            currd->vmcs_mutation_exit_count_timing++;
++        }
++           
++    }
++
++
++    /** MONITORING ENABLED CMD **/
++    if ( (currd->vmcs_monitoring_mode==1 && !currd->vmcs_mutation_mode) ||
++        (currd->vmcs_boot_monitoring_mode==1) ||
++        (currd->vmcs_monitoring_mode==1 && currd->vmcs_mutation_mode==1 && currd->vmcs_mutation_iteration_in_progress==1)) 
++    {
++
++
++        /** Starts monitoring of the current vmexit */
++        vmcs_monitoring_function(0xFFFFFFFF, 0xFFFFFFFF, 0);
++
++        /***Monitoring general purpose registers **/
++        vmcs_monitoring_function(RAX, regs->rax, REG_T);
++        vmcs_monitoring_function(RBX, regs->rbx, REG_T);
++        vmcs_monitoring_function(RCX, regs->rcx, REG_T);
++        vmcs_monitoring_function(RDX, regs->rdx, REG_T);
++        vmcs_monitoring_function(R8,  regs->r8, REG_T);
++        vmcs_monitoring_function(R9,  regs->r9, REG_T);
++        vmcs_monitoring_function(R10, regs->r10, REG_T);
++        vmcs_monitoring_function(R11, regs->r11, REG_T);
++        vmcs_monitoring_function(R12, regs->r12, REG_T);
++        vmcs_monitoring_function(R13, regs->r13, REG_T);
++        vmcs_monitoring_function(R14, regs->r14, REG_T);
++        vmcs_monitoring_function(R15, regs->r15, REG_T);
++        vmcs_monitoring_function(RBP, regs->rbp, REG_T);
++        vmcs_monitoring_function(RDI, regs->rdi, REG_T);
++        vmcs_monitoring_function(RSI, regs->rsi, REG_T);
++    }
++
++    if ((ret == -1) && (dom0->vmcs_debug_mode == 1)) printk("[DBG] NO NEW ITERATION\n");
++
++    return ret;
++}
++
++
+ void vmx_vmexit_handler(struct cpu_user_regs *regs)
+ {
+     unsigned long exit_qualification, exit_reason, idtv_info, intr_info = 0;
+     unsigned int vector = 0, mode;
+     struct vcpu *v = current;
+     struct domain *currd = v->domain;
++    
++    int ret;
++    
++    /****************************************************************/
++    ret = vmcs_fuzzing_injection(regs);
++    if (ret == -1) {
++        struct domain *dom0 = get_domain_by_id(0);
++        if (dom0->vmcs_non_blocking_mode==1) return;
++    }
++    /****************************************************************/
++    
+ 
+     __vmread(GUEST_RIP,    &regs->rip);
+     __vmread(GUEST_RSP,    &regs->rsp);
+@@ -4550,8 +4804,8 @@
+     case EXIT_REASON_ACCESS_LDTR_OR_TR:
+         vmx_handle_descriptor_access(exit_reason);
+         break;
+-
+     case EXIT_REASON_VMX_PREEMPTION_TIMER_EXPIRED:
++        break;
+     case EXIT_REASON_INVPCID:
+     /* fall through */
+     default:
+diff -ruN xen/xen/arch/x86/hypercall.c xen_patched/xen/arch/x86/hypercall.c
+--- xen/xen/arch/x86/hypercall.c	2022-11-05 13:12:55.532485859 +0100
++++ xen_patched/xen/arch/x86/hypercall.c	2022-11-05 12:58:09.490058319 +0100
+@@ -34,6 +34,7 @@
+ 
+ const hypercall_args_t hypercall_args_table[NR_hypercalls] =
+ {
++
+     ARGS(set_trap_table, 1),
+     ARGS(mmu_update, 4),
+     ARGS(set_gdt, 2),
+@@ -75,6 +76,7 @@
+     ARGS(dm_op, 3),
+     ARGS(hypfs_op, 5),
+     ARGS(mca, 1),
++    ARGS(vmcs_fuzzing, 4), //VMCS FUZZING ARGUMENTS
+     ARGS(arch_1, 1),
+ };
+ 
+diff -ruN xen/xen/arch/x86/pv/hypercall.c xen_patched/xen/arch/x86/pv/hypercall.c
+--- xen/xen/arch/x86/pv/hypercall.c	2022-11-05 13:12:55.560484800 +0100
++++ xen_patched/xen/arch/x86/pv/hypercall.c	2022-11-05 12:58:09.490058319 +0100
+@@ -45,6 +45,7 @@
+ const pv_hypercall_table_t pv_hypercall_table[] = {
+     COMPAT_CALL(set_trap_table),
+     HYPERCALL(mmu_update),
++    HYPERCALL(vmcs_fuzzing),
+     COMPAT_CALL(set_gdt),
+     HYPERCALL(stack_switch),
+     COMPAT_CALL(set_callbacks),
+diff -ruN xen/xen/arch/x86/x86_64/Makefile xen_patched/xen/arch/x86/x86_64/Makefile
+--- xen/xen/arch/x86/x86_64/Makefile	2022-11-05 13:12:54.784513939 +0100
++++ xen_patched/xen/arch/x86/x86_64/Makefile	2022-11-05 12:58:09.490058319 +0100
+@@ -14,3 +14,12 @@
+ obj-bin-$(CONFIG_KEXEC) += kexec_reloc.o
+ 
+ obj-$(CONFIG_CRASH_DEBUG)   += gdbstub.o
++
++ifeq ($(CONFIG_COVERAGE),y)
++ifeq ($(CONFIG_CC_IS_CLANG),y)
++    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
++else
++    COV_FLAGS := -fprofile-arcs -ftest-coverage
++endif
++$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
++endif
+\ Manca newline alla fine del file
+diff -ruN xen/xen/common/coverage/gcc_7.c xen_patched/xen/common/coverage/gcc_7.c
+--- xen/xen/common/coverage/gcc_7.c	2022-11-05 13:12:54.800513349 +0100
++++ xen_patched/xen/common/coverage/gcc_7.c	2022-11-05 12:58:09.490058319 +0100
+@@ -15,7 +15,7 @@
+ #error "Wrong version of GCC used to compile gcov"
+ #endif
+ 
+-#define GCOV_COUNTERS 9
++#define GCOV_COUNTERS 8
+ 
+ #include "gcc_4_7.c"
+ 
+diff -ruN xen/xen/common/domain.c xen_patched/xen/common/domain.c
+--- xen/xen/common/domain.c	2022-11-05 13:12:55.584483893 +0100
++++ xen_patched/xen/common/domain.c	2022-11-05 12:58:09.494057954 +0100
+@@ -473,6 +473,12 @@
+     lock_profile_deregister_struct(LOCKPROF_TYPE_PERDOM, d);
+ 
+     free_domain_struct(d);
++
++    /**VMCS Monitoring, free the buffer **/
++    if(d->vmcs_monitoring_buffer) xfree(d->vmcs_monitoring_buffer);
++    if(d->vmcs_boot_monitoring_buffer) xfree(d->vmcs_boot_monitoring_buffer);
++    //if(d->mutation) xfree(d->mutation);
++
+ }
+ 
+ static int sanitise_domain_config(struct xen_domctl_createdomain *config)
+diff -ruN xen/xen/common/Makefile xen_patched/xen/common/Makefile
+--- xen/xen/common/Makefile	2022-11-05 13:12:55.580484044 +0100
++++ xen_patched/xen/common/Makefile	2022-11-05 12:58:09.494057954 +0100
+@@ -36,6 +36,7 @@
+ obj-y += rcupdate.o
+ obj-y += rwlock.o
+ obj-y += shutdown.o
++obj-y += vmcs_fuzzing.o
+ obj-y += softirq.o
+ obj-y += smp.o
+ obj-y += spinlock.o
+diff -ruN xen/xen/common/vmcs_fuzzing.c xen_patched/xen/common/vmcs_fuzzing.c
+--- xen/xen/common/vmcs_fuzzing.c	1970-01-01 01:00:00.000000000 +0100
++++ xen_patched/xen/common/vmcs_fuzzing.c	2022-11-08 22:30:47.158725498 +0100
+@@ -0,0 +1,422 @@
++#include <xen/xmalloc.h>
++#include <xen/guest_access.h>
++#include <xen/sched.h>
++#include <asm/delay.h>
++#include <public/vmcs_fuzzing.h>
++
++/**
++ * vmcs_fuzzing.c
++ * @brief  This function enables the VMCS Monitoring/Fuzzing
++ * 
++ * @param dom It is the domain under monitoring/injection
++ * @param mode it is the mode (the oepration)
++ * @param size it is the size of the buffer as number of uint64
++ * @param buf it is the pointer to the area heap where the buffer is located
++ * @return long 
++ * 
++ */
++int synch_with_domu(struct domain* dom0);
++int start_new_mutation(struct domain* dom0);
++
++#define READ_TSC(value) do {\
++unsigned long   cycles_low, cycles_high;\
++__asm__ __volatile__("RDTSC;" : "=d"(cycles_high), "=a"(cycles_low):"d"(0), "a"(0): );\
++value = ( ((uint64_t)cycles_high << 32) | cycles_low ); \
++}while(0)
++
++ 
++long do_vmcs_fuzzing(domid_t dom, int mode, unsigned int size, XEN_GUEST_HANDLE_PARAM(uint64_t) buf){
++    int ret= 0;
++   
++    unsigned int size_bin_data = size/3;  //num of vmreads/vmwrites
++    struct domain *dom0 = get_domain_by_id(0);
++    struct domain *d;
++
++    long long int start_hyp, stop_hyp = 0;
++    READ_TSC(start_hyp);
++    
++    /**pre elaboration**/
++    d = get_domain_by_id(dom);
++    if ( !d && mode != VMCS_BOOT_MUTATION_SETUP ) return -EINVAL; /* invalid domain */
++    //preempt_disable();
++    /******************/
++
++
++    switch ( mode )
++    {
++    case VMCS_SET_MAX_TP_FLAG:
++    {
++        dom0->vmcs_get_max_tp_flag=1;
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] set max tp flag\n");
++        break;
++    }
++    case VMCS_MONITORING_TIMING_START:
++    {
++        dom0->vmcs_boot_monitoring_buffer_timing_flag=1;
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] timing monitoring start\n");
++        break;
++    }
++    case VMCS_MONITORING_TIMING_STOP:
++    {
++        uint64_t* temp;
++        dom0->vmcs_boot_monitoring_buffer_timing_flag=0;
++
++        temp = d->vmcs_boot_monitoring_buffer_timing;
++
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] timing monitoring stop\n");
++
++        d->vmcs_boot_monitoring_buffer_timing = NULL;
++        if ((size < dom0->vmcs_boot_monitoring_exit_n ) || copy_to_guest(buf, (uint64_t*)temp, dom0->vmcs_boot_monitoring_exit_n ) ) {
++            ret = -EFAULT;
++        }
++        else {
++            xfree(temp);
++            ret = dom0->vmcs_boot_monitoring_exit_n;
++        }
++        break;
++    }
++    case VMCS_MONITORING_TIMING_START_MUTATION:
++    {
++
++        d->vmcs_mutation_exit_count_timing=0;
++        dom0->vmcs_mutation_buffer_timing_flag=1;
++        //it allocs a memory of int64_t * size, where size is the number of injected exits
++        dom0->vmcs_mutation_exit_n_timing=size;
++        if(d->vmcs_mutation_buffer_timing) xfree(d->vmcs_mutation_buffer_timing);
++        d->vmcs_mutation_buffer_timing=xmalloc_array(uint64_t, dom0->vmcs_mutation_exit_n_timing);
++
++        break;
++    }
++    case VMCS_MONITORING_TIMING_STOP_MUTATION:
++    {
++        uint64_t* temp;
++        dom0->vmcs_mutation_buffer_timing_flag=0;
++
++        temp = d->vmcs_mutation_buffer_timing;
++
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] timing monitoring stop\n");
++
++        d->vmcs_mutation_buffer_timing = NULL;
++        if ((size < dom0->vmcs_mutation_exit_n_timing ) || copy_to_guest(buf, (uint64_t*)temp, dom0->vmcs_mutation_exit_n_timing ) ) {
++            ret = -EFAULT;
++        }
++        else {
++            xfree(temp);
++            ret = dom0->vmcs_mutation_exit_n_timing;
++        }
++        break;
++    }
++    case VMCS_MONITORING_START:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] monitoring start\n");
++
++        if (d->vmcs_monitoring_buffer)
++        {
++            ret = -EBUSY; 
++            break;
++        }
++        d->vmcs_monitoring_pos = 0;
++        d->vmcs_monitoring_buffer_size = size_bin_data;    
++        d->vmcs_monitoring_buffer = xmalloc_array(cpu_bin_data_t, size_bin_data); 
++        if ( !d->vmcs_monitoring_buffer ){
++            ret = -ENOMEM;
++            break;
++        }
++        d->vmcs_monitoring_mode = 1;
++        break;
++    }
++    case VMCS_MONITORING_STOP:
++    {
++        unsigned size_row_data = 3*d->vmcs_monitoring_pos;
++        cpu_bin_data_t* temp;
++         
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] monitoring stop\n");
++
++        temp = d->vmcs_monitoring_buffer;
++        d->vmcs_monitoring_mode = 0;
++        d->vmcs_monitoring_buffer = NULL;
++        if ((size < size_row_data) || copy_to_guest(buf, (uint64_t*)temp, size_row_data) )
++            ret = -EFAULT;
++        else {
++            xfree(temp);
++            ret = size_row_data;
++        }
++        break;
++    }
++    case VMCS_BOOT_MONITORING_SET_NUM_SEC:
++    {
++        dom0->vmcs_monitoring_num_sec = size;
++        break;
++    }   
++    case VMCS_BOOT_MONITORING_SET_EXIT_N:
++    {
++        dom0->vmcs_boot_monitoring_exit_n = size;
++        dom0->vmcs_boot_monitoring_exit_count = 0;
++        break;
++    }
++    // Call this hypercall only on dom0 domain
++    case VMCS_BOOT_MONITORING_SETUP:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] boot monitoring setup\n");
++        dom0->vmcs_boot_monitoring_setup = 1;
++        dom0->vmcs_boot_monitoring_synch = 0;
++        dom0->vmcs_boot_monitoring_buffer_size = size_bin_data;
++        break;
++    }
++    case VMCS_BOOT_MONITORING_CHECK:
++    {
++        ret = dom0->vmcs_boot_monitoring_synch;
++        break;
++    }
++    case VMCS_BOOT_MONITORING_STOP:
++    {
++        unsigned size_row_data = 3*d->vmcs_boot_monitoring_pos;
++        cpu_bin_data_t* temp = d->vmcs_boot_monitoring_buffer;
++
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] boot monitoring stop\n");
++
++        d->vmcs_boot_monitoring_buffer = NULL;
++        if ((size < size_row_data) || copy_to_guest(buf, (uint64_t*)temp, size_row_data) ) {
++            ret = -EFAULT;
++        }
++        else {
++            xfree(temp);
++            ret = d->vmcs_boot_monitoring_pos*3; 
++        }
++        break;
++    }
++    // Call this hypercall only on dom0 domain
++    case VMCS_BOOT_MUTATION_SETUP:
++    {
++        int i;
++        uint8_t temp_vett_hash[MOD_HASH_VALUE]=hash_association;
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] boot mutation enabled\n");
++        dom0->vmcs_boot_mutation_mode = dom;
++        for (i=0;i<MOD_HASH_VALUE;i++){
++            dom0->hash_mutation_fields_to_idx[i]=temp_vett_hash[i];
++        }
++        //preempt_enable();
++        return 0;
++    }
++    case VMCS_BOOT_MUTATION_CHECK:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] boot mutation check, new_iteration %d\n",d->vmcs_mutation_new_iteration);
++        ret=d->vmcs_mutation_new_iteration;
++        break;
++    }
++    case VMCS_BOOT_MUTATION_DISABLE:
++    {
++
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] boot mutation disable\n");
++        
++        dom0->vmcs_boot_mutation_mode = 0;
++        d->vmcs_mutation_mode=0;
++        if(d->mutation) xfree(d->mutation);
++        break;
++    }
++
++    case VMCS_MUTATION_START_NEW_ITERATION_BLOCKING:
++    { 
++        
++        /*declaration variables*/
++        uint64_t i;
++        uint64_t* raw_buffer;
++        uint64_t* mutation_temp;
++        int ite=0;
++        unsigned long long   start, stop, micro, stop2 = 0;
++
++        READ_TSC(start);
++        for (i=0;i<1000;i++){
++            asm volatile("nop" : : : "memory");
++        }
++        READ_TSC(stop);
++        
++        micro=stop-start;
++        
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] new iteration, estimated micro %lld\n", micro);
++        start=0;
++        READ_TSC(start);
++        /**copy from guest the entire buffer**/
++        if (size%3 == 1) {ret=-EFAULT; break;}
++        raw_buffer = xmalloc_array(uint64_t, size);
++        if ( copy_from_guest(raw_buffer, buf, size) ) {
++            xfree(raw_buffer);
++            ret=-EFAULT;
++            break;
++        }
++        
++        /**alloc new mutations**/
++        mutation_temp = xmalloc_array(uint64_t, MUTATION_SIZE);
++        /**reset mutations**/
++        memset(mutation_temp, 0, sizeof(uint64_t)*MUTATION_SIZE);
++        
++        for (i=0;i<size;i=i+3){
++            int index;
++            get_idx_mutation(dom0, raw_buffer[i], index);
++            mutation_temp[index] = raw_buffer[i+1];
++        }
++        stop=0;
++        READ_TSC(stop);
++        if (dom0->vmcs_debug_mode == 1  && micro!=0) printk("[CMD HYPERCALL] (1-lat) new iteration (stop-start):%llu, %llu micros \n", stop-start, (stop-start)/micro);
++        ite=synch_with_domu(d);
++        if(ite) { ret = 2; break;}
++        if(d->mutation) xfree(d->mutation);
++
++        d->mutation=mutation_temp;
++        if(start_new_mutation(d)) { ret = 3; break;}
++        ite=synch_with_domu(d);
++        if(ite){ret = 4; break;}
++        if(d->mutation) xfree(d->mutation);
++        if(mutation_temp) xfree(mutation_temp);
++        READ_TSC(stop2);
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] (2-lat) new iteration (stop-start):%llu, %llu micros \n", stop2-stop, (stop2-stop)/micro);
++        break;
++    }
++    case VMCS_MUTATION_START_NEW_ITERATION_NO_BLOCKING:
++    {
++        
++        /*declaration variables*/
++        uint64_t i;
++        uint64_t* raw_buffer;
++        uint64_t*  mutation_temp;
++        int ite=0;
++        unsigned long long   start, stop, micro, stop2 ;
++
++
++        micro=0;
++        READ_TSC(start);
++        for (i=0;i<1000;i++){
++           asm volatile("nop" : : : "memory");
++        }
++        READ_TSC(stop);
++        micro=stop-start;
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] new iteration, estimated micro %lld\n", micro);
++        start=0;
++        READ_TSC(start);
++        /**copy from guest the entire buffer**/
++        if (size%3 == 1) {ret=-EFAULT; break;}
++        raw_buffer = xmalloc_array(uint64_t, size);
++        if ( copy_from_guest(raw_buffer, buf, size) ) {
++            xfree(raw_buffer);
++            ret = -EFAULT;
++            break;
++        }
++        
++        /**alloc new mutations**/
++        mutation_temp = xmalloc_array(uint64_t, MUTATION_SIZE);
++        /**reset mutations**/
++        memset(mutation_temp, 0, sizeof(uint64_t)*MUTATION_SIZE);
++
++        for (i=0;i<size;i=i+3){
++            int index;
++            get_idx_mutation(dom0, raw_buffer[i], index);
++            mutation_temp[index] = raw_buffer[i+1];
++        }
++        READ_TSC(stop);
++        if (dom0->vmcs_debug_mode == 1 && micro!=0) printk("[CMD HYPERCALL] (1-lat) new iteration (stop-start):%llu, %llu micros \n", stop-start, (stop-start)/micro);
++        
++        ite=synch_with_domu(d);
++        if(ite) { ret = 2; break;}
++        if(d->mutation) xfree(d->mutation);
++        d->mutation=mutation_temp;
++        if(start_new_mutation(d)) { ret = 3; break;}
++
++        READ_TSC(stop2);
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] (2-lat) new iteration (stop-start):%llu, %llu micros \n", stop2-stop, (stop2-stop)/micro);
++        
++        break;
++    }
++
++    case VMCS_MUTATION_ENABLE:
++    {
++        
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] mutation enabled\n");
++        
++        d->vmcs_mutation_mode = 1;
++        break;
++    }
++    case VMCS_MUTATION_DISABLE:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] mutation disabled\n");
++        d->vmcs_mutation_mode = 0;
++        if(d->mutation){
++            xfree(d->mutation);
++        }
++        
++        break;
++    }
++    
++    case VMCS_DEBUG_MODE_ENABLE:
++    {
++        printk("[CMD HYPERCALL] debug mode enabled\n");
++        dom0->vmcs_debug_mode = 1;
++        break;
++    }
++    case VMCS_DEBUG_MODE_DISABLE:
++    {
++        printk("[CMD HYPERCALL] debug mode disabled\n");
++        dom0->vmcs_debug_mode = 0;
++        break;
++    }
++    case VMCS_NON_BLOCKING_MODE_ENABLE:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] non-blocking mode enabled\n");
++        dom0->vmcs_non_blocking_mode = 1;
++        break;
++    }
++    case VMCS_NON_BLOCKING_MODE_DISABLE:
++    {
++        if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] non-blocking mode disabled\n");
++        dom0->vmcs_non_blocking_mode = 0;
++        break;
++    }
++    default:
++        ret = -ENOSYS;
++    }
++
++    READ_TSC(stop_hyp);
++    if (dom0->vmcs_debug_mode == 1) 
++        printk("Hypercall latency (cpu cycles): %lld, proc id: %d \n", stop_hyp-start_hyp, smp_processor_id());
++
++    /**post elabboration**/
++    //preempt_enable();
++
++    if (mode!=VMCS_BOOT_MUTATION_SETUP){
++        if ( dom != DOMID_SELF )
++            put_domain(d);
++    }
++    return ret;
++}
++
++
++/**
++ * @brief 
++ * 
++ * @param dom0 
++ * @return int 0 it losts the synch, >0 otherwise it is synch
++ */
++int synch_with_domu(struct domain* currd){
++    uint64_t i;
++    for (i=BUSY_WAIT_CYCLES; i>0; i--) {
++        if (currd->vmcs_mutation_new_iteration == 0) {
++            struct domain *dom0 = get_domain_by_id(0);
++            if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] synch_with_domu i:%"PRIx64"\n", i);
++            break;
++        }
++    }
++    if (i==0) return -1;
++    return 0;
++}
++
++/**
++ * @brief Starts a new iteration 
++ * The precondition requires that it has taken the synch 
++ *
++ * @param dom0 
++ * @return int 
++ */
++int start_new_mutation(struct domain* currd){
++    //currd->vmcs_mutation_new_iteration = 1;
++    return test_and_set_bool(currd->vmcs_mutation_new_iteration);
++    //if (dom0->vmcs_debug_mode == 1) printk("[CMD HYPERCALL] start_new_mutation\n");
++}
+diff -ruN xen/xen/include/asm-x86/hvm/vmx/vmx.h xen_patched/xen/include/asm-x86/hvm/vmx/vmx.h
+--- xen/xen/include/asm-x86/hvm/vmx/vmx.h	2022-11-05 13:12:55.656481171 +0100
++++ xen_patched/xen/include/asm-x86/hvm/vmx/vmx.h	2022-11-09 12:12:08.765242553 +0100
+@@ -68,6 +68,18 @@
+     ept_access_all   = 7, /* Full permissions */
+ } ept_access_t;
+ 
++
++/**
++ * @brief vmc_fuzzing vmx defines
++ *
++ */
++#define READ_TSC(value) do {\
++unsigned long   cycles_low, cycles_high;\
++__asm__ __volatile__("RDTSC;" : "=d"(cycles_high), "=a"(cycles_low):"d"(0), "a"(0): );\
++value = ( ((uint64_t)cycles_high << 32) | cycles_low ); \
++}while(0)
++
++
+ #define EPT_TABLE_ORDER         9
+ #define EPTE_SUPER_PAGE_MASK    0x80
+ #define EPTE_MFN_MASK           0xffffffffff000ULL
+@@ -102,6 +114,7 @@
+ void vmx_update_exception_bitmap(struct vcpu *v);
+ void vmx_update_cpu_exec_control(struct vcpu *v);
+ void vmx_update_secondary_exec_control(struct vcpu *v);
++static void vmcs_monitoring_function(unsigned long long field, unsigned long long value, unsigned long long type);
+ 
+ #define POSTED_INTR_ON  0
+ #define POSTED_INTR_SN  1
+@@ -369,8 +382,95 @@
+                    : "memory");
+ }
+ 
++#define VMWRITE_T   0
++#define VMREAD_T    1
++#define REG_T       2
++
++static void vmcs_monitoring_function(unsigned long long field, unsigned long long value, unsigned long long type){
++    struct domain *d = current->domain;
++
++    if (d && (d->vmcs_boot_monitoring_buffer) && (d->vmcs_boot_monitoring_mode==1)){
++        if ((d->vmcs_boot_monitoring_pos) < (d->vmcs_boot_monitoring_buffer_size)) {
++            d->vmcs_boot_monitoring_buffer[d->vmcs_boot_monitoring_pos].field=field;
++            d->vmcs_boot_monitoring_buffer[d->vmcs_boot_monitoring_pos].data=value;
++            d->vmcs_boot_monitoring_buffer[d->vmcs_boot_monitoring_pos].type=type;
++            d->vmcs_boot_monitoring_pos=d->vmcs_boot_monitoring_pos+1;
++        }
++    }
++
++    if ( d && (d->vmcs_monitoring_buffer) && (
++        (d->vmcs_monitoring_mode==1 && !d->vmcs_mutation_mode) ||
++        (d->vmcs_monitoring_mode==1 && d->vmcs_mutation_mode==1 && d->vmcs_mutation_iteration_in_progress==1)
++        )
++    )
++    {
++        if((d->vmcs_monitoring_pos)<d->vmcs_monitoring_buffer_size){
++            d->vmcs_monitoring_buffer[d->vmcs_monitoring_pos].field=field;
++            d->vmcs_monitoring_buffer[d->vmcs_monitoring_pos].data=value;
++            d->vmcs_monitoring_buffer[d->vmcs_monitoring_pos].type=type;
++            d->vmcs_monitoring_pos=d->vmcs_monitoring_pos+1;
++        }
++    } 
++}
++
++
++
++static always_inline void __vmwrite_without_monitoring(unsigned long field, unsigned long value)
++{
++    asm volatile (
++#ifdef HAVE_AS_VMX
++                   "vmwrite %1, %0\n"
++#else
++                   VMWRITE_OPCODE MODRM_EAX_ECX
++#endif
++                   /* CF==1 or ZF==1 --> BUG() */
++                   UNLIKELY_START(be, vmwrite)
++                   _ASM_BUGFRAME_TEXT(0)
++                   UNLIKELY_END_SECTION
++                   :
++#ifdef HAVE_AS_VMX
++                   : "r" (field) , "rm" (value),
++#else
++                   : "a" (field) , "c" (value),
++#endif
++                     _ASM_BUGFRAME_INFO(BUGFRAME_bug, __LINE__, __FILE__, 0)
++        );
++    
++}
++
++
++static always_inline void __vmread_without_monitoring(unsigned long field, unsigned long *value)
++{
++    asm volatile (
++#ifdef HAVE_AS_VMX
++                   "vmread %1, %0\n\t"
++#else
++                   VMREAD_OPCODE MODRM_EAX_ECX
++#endif
++                   /* CF==1 or ZF==1 --> BUG() */
++                   UNLIKELY_START(be, vmread)
++                   _ASM_BUGFRAME_TEXT(0)
++                   UNLIKELY_END_SECTION
++#ifdef HAVE_AS_VMX
++                   : "=rm" (*value)
++                   : "r" (field),
++#else
++                   : "=c" (*value)
++                   : "a" (field),
++#endif
++                     _ASM_BUGFRAME_INFO(BUGFRAME_bug, __LINE__, __FILE__, 0)
++        );
++}
++
++
++
++
+ static always_inline void __vmread(unsigned long field, unsigned long *value)
+ {
++    unsigned long mask;
++    struct domain *d = current->domain;
++    struct domain *dom0 = get_domain_by_id(0); 
++
+     asm volatile (
+ #ifdef HAVE_AS_VMX
+                    "vmread %1, %0\n\t"
+@@ -390,8 +490,28 @@
+ #endif
+                      _ASM_BUGFRAME_INFO(BUGFRAME_bug, __LINE__, __FILE__, 0)
+         );
++    
++    /** Software injection:  the field is read only and the mutation mode is enabled **/
++    mask = ((1<<2)-1) & (field >> (11-1));
++    //if (mask==1 && dom0->vmcs_boot_mutation_mode==1 && currd->vmcs_mutation_new_iteration==1){
++   
++    if (d->vmcs_mutation_mode==1 && d->vmcs_mutation_iteration_in_progress==1 && d->mutation){
++        int index;
++        get_idx_mutation(dom0, field, index);
++        *value=d->mutation[index];
++        if (dom0->vmcs_debug_mode == 1) printk("[__vmread]  field:%"PRIx64 ", value:%"PRIx64"\n", field,*value );
++        if (mask!=1)  {
++            __vmwrite_without_monitoring(field, d->mutation[index]);
++            if (dom0->vmcs_debug_mode == 1) printk("[__vmwrite] Yes\n");
++        }
++    }
++
++    vmcs_monitoring_function(field, *value, VMREAD_T);
+ }
+ 
++
++
++
+ static always_inline void __vmwrite(unsigned long field, unsigned long value)
+ {
+     asm volatile (
+@@ -412,6 +532,8 @@
+ #endif
+                      _ASM_BUGFRAME_INFO(BUGFRAME_bug, __LINE__, __FILE__, 0)
+         );
++    
++    vmcs_monitoring_function(field, value, VMWRITE_T);
+ }
+ 
+ static inline enum vmx_insn_errno vmread_safe(unsigned long field,
+diff -ruN xen/xen/include/public/arch-x86/xen-x86_64.h xen_patched/xen/include/public/arch-x86/xen-x86_64.h
+--- xen/xen/include/public/arch-x86/xen-x86_64.h	2022-11-05 13:12:54.888510099 +0100
++++ xen_patched/xen/include/public/arch-x86/xen-x86_64.h	2022-11-05 12:58:09.494057954 +0100
+@@ -24,6 +24,7 @@
+  * Copyright (c) 2004-2006, K A Fraser
+  */
+ 
++
+ #ifndef __XEN_PUBLIC_ARCH_X86_XEN_X86_64_H__
+ #define __XEN_PUBLIC_ARCH_X86_XEN_X86_64_H__
+ 
+@@ -43,6 +44,7 @@
+  * installing their own GDT.
+  */
+ 
++
+ #define FLAT_RING3_CS32 0xe023  /* GDT index 260 */
+ #define FLAT_RING3_CS64 0xe033  /* GDT index 262 */
+ #define FLAT_RING3_DS32 0xe02b  /* GDT index 261 */
+@@ -176,12 +178,84 @@
+ #define __DECL_REG_HI(num)    uint64_t r ## num
+ #endif
+ 
++/**VMCS fuzzing data structures**/
++struct cpu_bin_data {
++    unsigned long long  field;
++    unsigned long long  data;
++    unsigned long long  type;
++};
++
++struct sw_mutation {
++    int inject;
++    unsigned long data;
++};
++
++typedef struct cpu_bin_data cpu_bin_data_t;
++typedef struct sw_mutation sw_mutation_t;
++
++struct read_only_fields{
++    sw_mutation_t vm_instr_error;
++    sw_mutation_t vm_exit_reason;
++    sw_mutation_t vm_exit_intr_info;
++    sw_mutation_t vm_exit_intr_error_code;
++    sw_mutation_t idt_vectoring_info;
++    sw_mutation_t idt_vectoring_error_code;
++    sw_mutation_t vm_exit_instr_len;
++    sw_mutation_t vmx_instr_info;
++    sw_mutation_t exit_qualification;
++    sw_mutation_t guest_linear_address;
++    sw_mutation_t guest_physical_address;
++};
++
++struct general_regs{
++    unsigned long long  eax;
++    unsigned long long  ebx;
++    unsigned long long  ecx;
++    unsigned long long  edx;
++    unsigned long long  r8;
++    unsigned long long  r9;
++    unsigned long long  r10;
++    unsigned long long  r11;
++    unsigned long long  r12;
++    unsigned long long  r13;
++    unsigned long long  r14;
++    unsigned long long  r15;
++    unsigned long long  rbp;
++    unsigned long long  rsi;
++    unsigned long long  rdi;
++};
++
++typedef struct read_only_fields read_only_fields_t;
++typedef struct general_regs general_regs_t;
++
++
++/*****Define********************* */
++#define RAX 0x1FFFFFFF
++#define RBX 0x2FFFFFFF
++#define RCX 0x3FFFFFFF
++#define RDX 0x4FFFFFFF
++#define R8  0x5FFFFFFF
++#define R9  0x6FFFFFFF
++#define R10 0x7FFFFFFF
++#define R11 0x8FFFFFFF
++#define R12 0x9FFFFFFF
++#define R13 0xaFFFFFFF
++#define R14 0xbFFFFFFF
++#define R15 0xcFFFFFFF
++#define RBP 0XdFFFFFFF
++#define RSI 0XeFFFFFFF
++#define RDI 0X0FFFFFFF
++
++
++/**++++++++++++++++++++++++++++++**/
++
++
+ struct cpu_user_regs {
+     __DECL_REG_HI(15);
+     __DECL_REG_HI(14);
+     __DECL_REG_HI(13);
+     __DECL_REG_HI(12);
+-    __DECL_REG_LO8(bp);
++    __DECL_REG_LO8(bp); /*3*/
+     __DECL_REG_LOHI(b);
+     __DECL_REG_HI(11);
+     __DECL_REG_HI(10);
+@@ -190,8 +264,8 @@
+     __DECL_REG_LOHI(a);
+     __DECL_REG_LOHI(c);
+     __DECL_REG_LOHI(d);
+-    __DECL_REG_LO8(si);
+-    __DECL_REG_LO8(di);
++    __DECL_REG_LO8(si); /*3*/
++    __DECL_REG_LO8(di); /*3*/
+     uint32_t error_code;    /* private */
+     uint32_t entry_vector;  /* private */
+     __DECL_REG_LO16(ip);
+@@ -208,7 +282,175 @@
+ };
+ typedef struct cpu_user_regs cpu_user_regs_t;
+ DEFINE_XEN_GUEST_HANDLE(cpu_user_regs_t);
++/**New impl**/
++
++#define get_idx_mutation(domain, field, index) index=domain->hash_mutation_fields_to_idx[field%MOD_HASH_VALUE]
+ 
++#define MUTATION_SIZE 155
++#define MOD_HASH_VALUE 890
++#define BUSY_WAIT_CYCLES 1000000000
++
++#define hash_association { \
++    [0]=0, \
++    [2]=1, \
++    [4]=2, \
++    [268]=3, \
++    [270]=4, \
++    [272]=5, \
++    [274]=6, \
++    [276]=7, \
++    [278]=8, \
++    [280]=9, \
++    [282]=10, \
++    [284]=11, \
++    [286]=12, \
++    [402]=13, \
++    [404]=14, \
++    [406]=15, \
++    [408]=16, \
++    [410]=17, \
++    [412]=18, \
++    [414]=19, \
++    [182]=20, \
++    [184]=21, \
++    [186]=22, \
++    [188]=23, \
++    [190]=24, \
++    [192]=25, \
++    [196]=26, \
++    [198]=27, \
++    [200]=28, \
++    [202]=29, \
++    [204]=30, \
++    [206]=31, \
++    [208]=32, \
++    [210]=33, \
++    [218]=34, \
++    [220]=35, \
++    [222]=36, \
++    [224]=37, \
++    [226]=38, \
++    [232]=39, \
++    [316]=40, \
++    [450]=41, \
++    [452]=42, \
++    [454]=43, \
++    [456]=44, \
++    [458]=45, \
++    [460]=46, \
++    [468]=47, \
++    [584]=48, \
++    [586]=49, \
++    [588]=50, \
++    [364]=51, \
++    [366]=52, \
++    [368]=53, \
++    [370]=54, \
++    [372]=55, \
++    [374]=56, \
++    [376]=57, \
++    [378]=58, \
++    [380]=59, \
++    [382]=60, \
++    [384]=61, \
++    [386]=62, \
++    [388]=63, \
++    [390]=64, \
++    [392]=65, \
++    [394]=66, \
++    [396]=67, \
++    [398]=68, \
++    [498]=69, \
++    [500]=70, \
++    [502]=71, \
++    [504]=72, \
++    [506]=73, \
++    [508]=74, \
++    [510]=75, \
++    [512]=76, \
++    [632]=77, \
++    [634]=78, \
++    [636]=79, \
++    [638]=80, \
++    [640]=81, \
++    [642]=82, \
++    [644]=83, \
++    [646]=84, \
++    [648]=85, \
++    [650]=86, \
++    [652]=87, \
++    [654]=88, \
++    [656]=89, \
++    [658]=90, \
++    [660]=91, \
++    [662]=92, \
++    [664]=93, \
++    [666]=94, \
++    [668]=95, \
++    [670]=96, \
++    [672]=97, \
++    [674]=98, \
++    [678]=99, \
++    [766]=100, \
++    [546]=101, \
++    [548]=102, \
++    [550]=103, \
++    [552]=104, \
++    [554]=105, \
++    [680]=106, \
++    [690]=107, \
++    [814]=108, \
++    [816]=109, \
++    [818]=110, \
++    [820]=111, \
++    [822]=112, \
++    [824]=113, \
++    [826]=114, \
++    [828]=115, \
++    [830]=116, \
++    [832]=117, \
++    [834]=118, \
++    [836]=119, \
++    [838]=120, \
++    [840]=121, \
++    [842]=122, \
++    [844]=123, \
++    [846]=124, \
++    [848]=125, \
++    [850]=126, \
++    [852]=127, \
++    [58]=128, \
++    [60]=129, \
++    [62]=130, \
++    [64]=131, \
++    [66]=132, \
++    [68]=133, \
++    [70]=134, \
++    [72]=135, \
++    [74]=136, \
++    [76]=137, \
++    [78]=138, \
++    [80]=139, \
++    [661]=140, \
++    [547]=141, \
++    [433]=142, \
++    [319]=143, \
++    [205]=144, \
++    [91]=145, \
++    [867]=146, \
++    [753]=147, \
++    [639]=148, \
++    [525]=149, \
++    [411]=150, \
++    [297]=151, \
++    [183]=152, \
++    [69]=153, \
++    [775]=154, \
++}; 
++  
++
++
++/***/
+ #undef __DECL_REG
+ #undef __DECL_REG_LOHI
+ #undef __DECL_REG_LO8
+@@ -239,3 +481,7 @@
+  * indent-tabs-mode: nil
+  * End:
+  */
++
++
++
++
+diff -ruN xen/xen/include/public/vmcs_fuzzing.h xen_patched/xen/include/public/vmcs_fuzzing.h
+--- xen/xen/include/public/vmcs_fuzzing.h	1970-01-01 01:00:00.000000000 +0100
++++ xen_patched/xen/include/public/vmcs_fuzzing.h	2022-11-09 12:10:38.876872573 +0100
+@@ -0,0 +1,24 @@
++#define VMCS_MONITORING_START               0
++#define VMCS_MONITORING_STOP                1
++#define VMCS_BOOT_MONITORING_SETUP          2
++#define VMCS_BOOT_MONITORING_STOP           3
++#define VMCS_MUTATION_ENABLE                4
++#define VMCS_MUTATION_DISABLE               5
++#define VMCS_BOOT_MUTATION_SETUP            6
++#define VMCS_MUTATION_START_NEW_ITERATION   7
++#define VMCS_DEBUG_MODE_ENABLE              8
++#define VMCS_DEBUG_MODE_DISABLE             9
++#define VMCS_NON_BLOCKING_MODE_ENABLE       10
++#define VMCS_NON_BLOCKING_MODE_DISABLE      11
++#define VMCS_BOOT_MONITORING_SET_EXIT_N     12
++#define VMCS_BOOT_MONITORING_CHECK          13
++#define VMCS_BOOT_MUTATION_DISABLE          14
++#define VMCS_MUTATION_START_NEW_ITERATION_BLOCKING  15
++#define VMCS_MUTATION_START_NEW_ITERATION_NO_BLOCKING 16
++#define VMCS_BOOT_MUTATION_CHECK 17
++#define VMCS_BOOT_MONITORING_SET_NUM_SEC 18
++#define VMCS_MONITORING_TIMING_START 19
++#define VMCS_MONITORING_TIMING_STOP 20
++#define VMCS_MONITORING_TIMING_START_MUTATION 21
++#define VMCS_MONITORING_TIMING_STOP_MUTATION 22
++#define VMCS_SET_MAX_TP_FLAG 23
+\ Manca newline alla fine del file
+diff -ruN xen/xen/include/public/xen.h xen_patched/xen/include/public/xen.h
+--- xen/xen/include/public/xen.h	2022-11-05 13:12:54.908509361 +0100
++++ xen_patched/xen/include/public/xen.h	2022-11-05 12:58:09.498057589 +0100
+@@ -131,6 +131,7 @@
+ #define __HYPERVISOR_xenpmu_op            40
+ #define __HYPERVISOR_dm_op                41
+ #define __HYPERVISOR_hypfs_op             42
++#define __HYPERVISOR_vmcs_fuzzing         43
+ 
+ /* Architecture-specific hypercall definitions. */
+ #define __HYPERVISOR_arch_0               48
+diff -ruN xen/xen/include/xen/hypercall.h xen_patched/xen/include/xen/hypercall.h
+--- xen/xen/include/xen/hypercall.h	2022-11-05 13:12:55.684480113 +0100
++++ xen_patched/xen/include/xen/hypercall.h	2022-11-05 12:58:09.498057589 +0100
+@@ -49,6 +49,8 @@
+ pci_physdev_op(
+     int cmd, XEN_GUEST_HANDLE_PARAM(void) arg);
+ 
++extern long do_vmcs_fuzzing( domid_t dom_id, int mode, unsigned int size, XEN_GUEST_HANDLE_PARAM(uint64_t) buf);
++
+ /*
+  * To allow safe resume of do_memory_op() after preemption, we need to know
+  * at what point in the page list to resume. For this purpose I steal the
+diff -ruN xen/xen/include/xen/sched.h xen_patched/xen/include/xen/sched.h
+--- xen/xen/include/xen/sched.h	2022-11-05 13:12:55.688479962 +0100
++++ xen_patched/xen/include/xen/sched.h	2022-11-08 22:23:43.104520590 +0100
+@@ -564,9 +564,51 @@
+         unsigned int guest_request_enabled       : 1;
+         unsigned int guest_request_sync          : 1;
+     } monitor;
+-
+     unsigned int vmtrace_size; /* Buffer size in bytes, or 0 to disable. */
+ 
++    
++    /** MODES **/
++    unsigned int vmcs_debug_mode;
++    unsigned int vmcs_non_blocking_mode;
++    unsigned int vmcs_monitoring_mode;
++    unsigned int vmcs_boot_monitoring_setup;
++    unsigned int vmcs_boot_monitoring_mode;
++    uint16_t vmcs_boot_mutation_mode;
++    unsigned int vmcs_mutation_mode;
++
++    /** VMCS iteration structures**/
++    unsigned int vmcs_mutation_new_iteration ;
++    unsigned int vmcs_mutation_iteration_in_progress;
++    
++    /** VMCS monitoring structures**/
++    cpu_bin_data_t* vmcs_monitoring_buffer;
++    unsigned int vmcs_monitoring_pos;
++    unsigned int vmcs_monitoring_buffer_size;
++   
++    /**VMCS sampling timestamps**/
++    uint64_t* vmcs_boot_monitoring_buffer_timing;
++    unsigned int vmcs_boot_monitoring_buffer_timing_flag;
++
++    unsigned int vmcs_mutation_buffer_timing_flag;
++    unsigned int vmcs_mutation_exit_n_timing;
++    unsigned int vmcs_mutation_exit_count_timing;
++    uint64_t* vmcs_mutation_buffer_timing;
++    unsigned int vmcs_get_max_tp_flag;
++
++    /** VMCS BOOT monitoring structures**/
++    cpu_bin_data_t* vmcs_boot_monitoring_buffer;
++    unsigned int vmcs_boot_monitoring_exit_n;
++    unsigned int vmcs_boot_monitoring_exit_count;
++    unsigned int vmcs_boot_monitoring_buffer_size;
++    unsigned int vmcs_boot_monitoring_pos;
++    unsigned int vmcs_boot_monitoring_synch;
++    uint64_t vmcs_monitoring_num_sec;
++    unsigned int vmcs_monitored_exit_valid;
++
++    /** VMCS software mutation structures**/
++    uint64_t* mutation;
++    uint8_t hash_mutation_fields_to_idx[MOD_HASH_VALUE];
++
+ #ifdef CONFIG_ARGO
+     /* Argo interdomain communication support */
+     struct argo_domain *argo;
+diff -ruN xen/xen/Rules.mk xen_patched/xen/Rules.mk
+--- xen/xen/Rules.mk	2022-11-05 13:12:55.464488428 +0100
++++ xen_patched/xen/Rules.mk	2022-11-05 12:58:09.498057589 +0100
+@@ -86,15 +86,6 @@
+ 
+ $(filter %.init.o,$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += -DINIT_SECTIONS_ONLY
+ 
+-ifeq ($(CONFIG_COVERAGE),y)
+-ifeq ($(CONFIG_CC_IS_CLANG),y)
+-    COV_FLAGS := -fprofile-instr-generate -fcoverage-mapping
+-else
+-    COV_FLAGS := -fprofile-arcs -ftest-coverage
+-endif
+-$(filter-out %.init.o $(nocov-y),$(obj-y) $(obj-bin-y) $(extra-y)): CFLAGS-y += $(COV_FLAGS)
+-endif
+-
+ ifeq ($(CONFIG_UBSAN),y)
+ # Any -fno-sanitize= options need to come after any -fsanitize= options
+ $(filter-out %.init.o $(noubsan-y),$(obj-y) $(obj-bin-y) $(extra-y)): \
