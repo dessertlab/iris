@@ -18,6 +18,10 @@ Before installing Xen you first need to install your *Dom0* OS kernel. We chose 
 Once installed and run Debian 11, you need to install the necessary dependencies for Xen:
 
 ```
+apt-get build-dep xen
+
+or
+
 apt-get install build-essential;
 apt-get install bcc bin86 gawk bridge-utils iproute2 libcurl4 libcurl4-openssl-dev bzip2 transfig tgif kmod;
 apt-get install texinfo texlive-latex-base texlive-latex-recommended texlive-fonts-extra texlive-fonts-recommended libpci-dev mercurial; 
