@@ -73,11 +73,11 @@ $ ./IRIS_cli m <num_vmexit_to_replay> <gran_monitoring> <dummy_vm_id>	e.g. ./IRI
 This directory includes a set of facilities to parse raw data and get intermediate or final results. In particular:
 
 * ``1_parse_cov_data.sh``: generates parsed coverage data (.info). You have to run it on the local machine where Xen patched. Useful for cov_info and cov_info_boot. 
-	- Usage example: ./1_parse_cov_data.sh /home/test/effectiveness/usr/cov_fit
+	- Usage example: ``./1_parse_cov_data.sh /home/test/effectiveness/usr/cov_fit``
 	- output -> parsed_coverage
 	- You need to specify hard-coded the number of the last cov_file (end)
 *  ``2_cumulative_cov.py``: evaluates cumulative coverage processing parsed coverage data. 
-	- Usage example: python2 2_cumulative_cov.py /home/test/effectiveness/usr/cov_fit
+	- Usage example: ``python2 2_cumulative_cov.py /home/test/effectiveness/usr/cov_fit``
 	- output -> results_cumulative
 	- count_cov_rec is the new coverage evaluated by the X record file
 	- count_cumul_rec is the cumulative coverage evaluated until X record file
@@ -85,10 +85,10 @@ This directory includes a set of facilities to parse raw data and get intermedia
 	- Usage in "seeds_folder"
 	- Output -> seeds_cat file 
 * ``4_process_single_cov.py``: evaluates hit differences (in terms of coverage) between two .info coverage files (e.g. record and replay files).
-	- Usage example: python2 4_process_single_cov.py cov_recorded.info cov_replayed.info
+	- Usage example: ``python2 4_process_single_cov.py cov_recorded.info cov_replayed.info``
 	- 4_distribution.py is similar, it requires two directories (e.g. record and replay files) as params. 
 * ``print_exit_distribution/5_print_exit_distr.c``: prints the exit distribution given a VM seeds file
-	- Usage: ./print_exit_distr ../usr/cov_fit/seeds 200
+	- Usage: ``./print_exit_distr ../usr/cov_fit/seeds 200``
 	- Results: seed # 	exit_reason_number 	exit_reason_name
 *  ``print_vmwrite_diff``: directory that includes source codes to evaluate vmwrites fitting starting from two seeds
 
